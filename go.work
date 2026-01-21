@@ -1,0 +1,10 @@
+go 1.21
+
+toolchain go1.22.0
+
+use (
+	./dev_agent
+	./plan_agent
+	./review_agent
+	./verify_agent
+)
