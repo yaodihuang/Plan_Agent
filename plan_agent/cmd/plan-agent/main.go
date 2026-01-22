@@ -13,6 +13,7 @@ import (
 	"plan_agent/internal/logx"
 	"plan_agent/internal/plan"
 	"plan_agent/internal/streaming"
+	t "plan_agent/internal/tools"
 )
 
 func main() {
@@ -56,6 +57,8 @@ func main() {
 	}
 
 	brain := b.NewLLMBrain(conf.AzureAPIKey, conf.AzureEndpoint, conf.AzureDeployment, conf.AzureAPIVersion, 3)
+	mcp := t.NewMCPClient(conf.MCPBaseURL)
+	handler := t.NewToolHandler(mcp, conf.ProjectName, strings.TrimSpace(*parent), conf.WorkspaceDir, nil)
 
 	var streamer *streaming.JSONStreamer
 	if streamEnabled {
@@ -63,7 +66,7 @@ func main() {
 		streamer.EmitThreadStarted(q, conf.ProjectName, strings.TrimSpace(*parent), *headless)
 	}
 
-	runner, err := plan.NewRunner(brain, streamer, plan.Options{
+	runner, err := plan.NewRunner(brain, handler, streamer, plan.Options{
 		Query:          q,
 		ProjectName:    conf.ProjectName,
 		ParentBranchID: strings.TrimSpace(*parent),

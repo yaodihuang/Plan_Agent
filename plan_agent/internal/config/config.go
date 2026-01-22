@@ -12,7 +12,9 @@ type AgentConfig struct {
 	AzureEndpoint   string
 	AzureDeployment string
 	AzureAPIVersion string
+	MCPBaseURL      string
 	ProjectName     string
+	WorkspaceDir    string
 }
 
 func FromEnv() (AgentConfig, error) {
@@ -42,14 +44,28 @@ func FromEnv() (AgentConfig, error) {
 		apiVersion = "2024-12-01-preview"
 	}
 
+	baseURL := os.Getenv("MCP_BASE_URL")
+	if baseURL == "" {
+		baseURL = "http://localhost:8000/mcp/sse"
+	}
+	if !(strings.HasPrefix(baseURL, "http://") || strings.HasPrefix(baseURL, "https://")) {
+		return AgentConfig{}, errors.New("MCP_BASE_URL must be a valid HTTP/HTTPS URL")
+	}
+
 	project := strings.TrimSpace(os.Getenv("PROJECT_NAME"))
+	workspace := os.Getenv("WORKSPACE_DIR")
+	if workspace == "" {
+		workspace = "/home/pan/workspace"
+	}
 
 	return AgentConfig{
 		AzureAPIKey:     apiKey,
 		AzureEndpoint:   endpoint,
 		AzureDeployment: deployment,
 		AzureAPIVersion: apiVersion,
+		MCPBaseURL:      baseURL,
 		ProjectName:     project,
+		WorkspaceDir:    workspace,
 	}, nil
 }
 
