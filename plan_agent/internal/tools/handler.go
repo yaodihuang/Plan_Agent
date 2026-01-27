@@ -3,6 +3,7 @@ package tools
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -147,6 +148,8 @@ func (h *ToolHandler) Handle(call ToolCall) map[string]any {
 		res, err = h.readArtifact(args)
 	case "branch_output":
 		res, err = h.branchOutput(args)
+	case "read_file":
+		res, err = h.readLocalFile(args)
 	default:
 		err = ToolExecutionError{Msg: fmt.Sprintf("unsupported tool: %s", name)}
 	}
@@ -543,6 +546,58 @@ func stringsLower(v any) string {
 	return strings.ToLower(strings.TrimSpace(s))
 }
 
+const maxLocalFileSize = 1 << 20 // 1 MB
+
+func (h *ToolHandler) readLocalFile(arguments map[string]any) (map[string]any, error) {
+	rawPath, _ := arguments["path"].(string)
+	path := strings.TrimSpace(rawPath)
+	if path == "" {
+		return nil, ToolExecutionError{Msg: "`path` is required"}
+	}
+
+	// Security: resolve to absolute and ensure within workspaceDir
+	absPath := path
+	if !filepath.IsAbs(path) {
+		if h.workspaceDir == "" {
+			return nil, ToolExecutionError{Msg: "relative path not allowed without workspace directory"}
+		}
+		absPath = filepath.Join(h.workspaceDir, path)
+	}
+	absPath = filepath.Clean(absPath)
+
+	if h.workspaceDir != "" {
+		wsAbs := filepath.Clean(h.workspaceDir)
+		if !strings.HasPrefix(absPath, wsAbs+string(filepath.Separator)) && absPath != wsAbs {
+			return nil, ToolExecutionError{Msg: fmt.Sprintf("path %q is outside workspace directory", path)}
+		}
+	}
+
+	info, err := os.Stat(absPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, ToolExecutionError{Msg: fmt.Sprintf("file not found: %s", path)}
+		}
+		return nil, ToolExecutionError{Msg: fmt.Sprintf("cannot stat file: %v", err)}
+	}
+	if info.IsDir() {
+		return nil, ToolExecutionError{Msg: fmt.Sprintf("path is a directory: %s", path)}
+	}
+	if info.Size() > maxLocalFileSize {
+		return nil, ToolExecutionError{Msg: fmt.Sprintf("file too large (%d bytes, max %d)", info.Size(), maxLocalFileSize)}
+	}
+
+	data, err := os.ReadFile(absPath)
+	if err != nil {
+		return nil, ToolExecutionError{Msg: fmt.Sprintf("failed to read file: %v", err)}
+	}
+
+	return map[string]any{
+		"path":    path,
+		"content": string(data),
+		"size":    info.Size(),
+	}, nil
+}
+
 func GetToolDefinitions() []map[string]any {
 	return []map[string]any{
 		{
@@ -589,6 +644,20 @@ func GetToolDefinitions() []map[string]any {
 						"full_output": map[string]any{"type": "boolean", "description": "Return the complete output log instead of any default truncation."},
 					},
 					"required": []any{"branch_id"},
+				},
+			},
+		},
+		{
+			"type": "function",
+			"function": map[string]any{
+				"name":        "read_file",
+				"description": "Read a local file from the workspace directory. Use this to load context files like review-map.md before planning.",
+				"parameters": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"path": map[string]any{"type": "string", "description": "File path relative to workspace directory, or absolute path within workspace."},
+					},
+					"required": []any{"path"},
 				},
 			},
 		},

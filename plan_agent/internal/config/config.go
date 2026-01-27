@@ -55,7 +55,12 @@ func FromEnv() (AgentConfig, error) {
 	project := strings.TrimSpace(os.Getenv("PROJECT_NAME"))
 	workspace := os.Getenv("WORKSPACE_DIR")
 	if workspace == "" {
-		workspace = "/home/pan/workspace"
+		// Default to current working directory instead of executable's grandparent
+		if cwd, err := os.Getwd(); err == nil {
+			workspace = cwd
+		} else {
+			workspace = "."
+		}
 	}
 
 	return AgentConfig{

@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"plan_agent/internal/brain"
 	"plan_agent/internal/logx"
 	"plan_agent/internal/streaming"
@@ -15,6 +17,7 @@ type Options struct {
 	Query          string
 	ProjectName    string
 	ParentBranchID string
+	WorkspaceDir   string
 }
 
 type Result struct {
@@ -41,6 +44,7 @@ func NewRunner(brain *brain.LLMBrain, handler *t.ToolHandler, streamer *streamin
 	opts.Query = strings.TrimSpace(opts.Query)
 	opts.ProjectName = strings.TrimSpace(opts.ProjectName)
 	opts.ParentBranchID = strings.TrimSpace(opts.ParentBranchID)
+	opts.WorkspaceDir = strings.TrimSpace(opts.WorkspaceDir)
 	if opts.Query == "" {
 		return nil, errors.New("query is required")
 	}
@@ -57,7 +61,26 @@ func NewRunner(brain *brain.LLMBrain, handler *t.ToolHandler, streamer *streamin
 
 func (r *Runner) Run() (*Result, error) {
 	logx.Infof("Starting plan workflow")
-	prompt := buildPlanPrompt(r.opts.Query, r.opts.ProjectName, r.opts.ParentBranchID)
+
+	// Pre-load review-map.md if it exists in workspace
+	reviewMapContent := ""
+	logx.Infof("WorkspaceDir: %q", r.opts.WorkspaceDir)
+	if r.opts.WorkspaceDir != "" {
+		reviewMapPath := filepath.Join(r.opts.WorkspaceDir, "review-map.md")
+		logx.Infof("Looking for review-map at: %s", reviewMapPath)
+		if data, err := os.ReadFile(reviewMapPath); err == nil {
+			reviewMapContent = strings.TrimSpace(string(data))
+			logx.Infof("Loaded review-map.md (%d bytes) from workspace", len(reviewMapContent))
+		} else if os.IsNotExist(err) {
+			logx.Warningf("review-map.md not found at: %s", reviewMapPath)
+		} else {
+			logx.Warningf("Failed to read review-map.md: %v", err)
+		}
+	} else {
+		logx.Warningf("WorkspaceDir is empty, skipping review-map.md loading")
+	}
+
+	prompt := buildPlanPrompt(r.opts.Query, r.opts.ProjectName, r.opts.ParentBranchID, reviewMapContent)
 	messages := []brain.ChatMessage{
 		{Role: "system", Content: "You are the PLAN Agent for the Master Agent orchestration system. " +
 			"Generate high-quality, executable plans that balance speed, thoroughness, and risk. " +
@@ -123,14 +146,12 @@ func toolError(resp map[string]any) (string, string) {
 	}
 	if status, _ := resp["status"].(string); strings.ToLower(strings.TrimSpace(status)) == "error" {
 		if errObj, ok := resp["error"].(map[string]any); ok {
-			msg, _ := errObj["message"].(string)
 			instr, _ := errObj["instruction"].(string)
-			return strings.TrimSpace(instr), strings.TrimSpace(msg)
+			if strings.TrimSpace(instr) != "" {
+				msg, _ := errObj["message"].(string)
+				return strings.TrimSpace(instr), strings.TrimSpace(msg)
+			}
 		}
-		if msg, ok := resp["error"].(string); ok {
-			return "", strings.TrimSpace(msg)
-		}
-		return "", "tool execution failed"
 	}
 	return "", ""
 }

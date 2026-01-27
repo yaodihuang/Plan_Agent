@@ -20,6 +20,7 @@ func main() {
 	query := flag.String("query", "", "User query to plan for")
 	parent := flag.String("parent-branch-id", "", "Optional parent branch id context")
 	project := flag.String("project-name", "", "Override project name")
+	workspaceDir := flag.String("workspace-dir", "", "Workspace directory for context files (e.g., review-map.md)")
 	headless := flag.Bool("headless", false, "Headless mode (no interactive prompt)")
 	streamJSON := flag.Bool("stream-json", false, "Emit workflow events as NDJSON (implies headless)")
 	flag.Parse()
@@ -38,6 +39,9 @@ func main() {
 
 	if *project != "" {
 		conf.ProjectName = *project
+	}
+	if *workspaceDir != "" {
+		conf.WorkspaceDir = *workspaceDir
 	}
 	if conf.ProjectName == "" {
 		fmt.Fprintln(os.Stderr, "Project name required via PROJECT_NAME or --project-name")
@@ -70,6 +74,7 @@ func main() {
 		Query:          q,
 		ProjectName:    conf.ProjectName,
 		ParentBranchID: strings.TrimSpace(*parent),
+		WorkspaceDir:   conf.WorkspaceDir,
 	})
 	if err != nil {
 		if streamer != nil && streamer.Enabled() {
