@@ -127,12 +127,6 @@ Keep the analysis under 2000 words. Focus on information that would help with ta
 		}
 	} else if skipAnalysis {
 		logx.Infof("Skipping code analysis as requested by user in query")
-	} else {
-		const maxReviewMapSize = 30000
-		if len(reviewMapContent) > maxReviewMapSize {
-			logx.Warningf("review-map.md is %d bytes, truncating to %d bytes to avoid token limit", len(reviewMapContent), maxReviewMapSize)
-			reviewMapContent = reviewMapContent[:maxReviewMapSize] + "\n\n[... truncated due to size limit ...]"
-		}
 	}
 
 	prompt := buildPlanPrompt(r.opts.Query, r.opts.ProjectName, r.opts.ParentBranchID, reviewMapContent, codeAnalysisContext)

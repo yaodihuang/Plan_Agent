@@ -224,6 +224,8 @@ Plan Agent loads review context in this order:
 
 If no review map is found and the query does not request skipping it, Plan Agent will invoke a remote codebase analysis to seed the plan. To skip review-map and analysis generation, include a phrase like `不需要review map` or `skip review map` in the query.
 
+Note: review-map content is passed through without truncation; ensure the file size fits your token budget.
+
 ### Build & Run
 
 ```bash
