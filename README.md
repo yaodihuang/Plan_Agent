@@ -14,7 +14,8 @@ Plan Agent is an intelligent planning system that generates multiple alternative
 - Supports parallel and sequential step orchestration using explicit dependencies and parallel groups
 - Provides trade-offs, confidence scores (0.0-1.0), and recommendations for each plan
 - Supports multi-round planning with refinement, replanning, incremental, and merge strategies
-- Automatically loads and utilizes existing review maps for contextual planning
+- Automatically loads and utilizes existing review maps (remote first, then local) for contextual planning
+- Falls back to a remote codebase analysis when no review map is available (unless the query requests skipping it)
 
 ### Architecture
 
@@ -39,13 +40,13 @@ plan_agent/
 
 ```bash
 # Basic usage
-plan-agent --query "Your task description" --project-name "ProjectName"
+plan-agent --query "Your task description" --project-name "ProjectName" --parent-branch-id "branch-uuid"
 
-# With parent branch context
-plan-agent --query "Your task" --project-name "ProjectName" --parent-branch-id "branch-uuid"
-
-# With workspace directory for context files
+# With local workspace directory for context files
 plan-agent --query "Your task" --project-name "ProjectName" --workspace-dir "/path/to/workspace"
+
+# With remote workspace directory for context files on Pantheon branches
+plan-agent --query "Your task" --project-name "ProjectName" --remote-workspace-dir "/remote/workspace"
 
 # Headless mode (no interactive prompt)
 plan-agent --query "Your task" --project-name "ProjectName" --headless
@@ -60,8 +61,9 @@ plan-agent --query "Your task" --project-name "ProjectName" --stream-json
 |----------|-------------|----------|
 | `--query` | User query/task to plan for | Yes (or interactive) |
 | `--project-name` | Pantheon project name | Yes |
-| `--parent-branch-id` | Optional parent branch UUID for context | No |
-| `--workspace-dir` | Workspace directory for context files (e.g., `review-map.md`) | No |
+| `--parent-branch-id` | Parent branch UUID to fork from | Yes |
+| `--workspace-dir` | Local workspace directory for context files (e.g., `review-map.md`) | No |
+| `--remote-workspace-dir` | Remote workspace directory on Pantheon branch | No |
 | `--headless` | Run without interactive prompt | No |
 | `--stream-json` | Emit workflow events as NDJSON (implies headless) | No |
 
@@ -76,8 +78,13 @@ Plan Agent reads configuration from environment variables (supports `.env` file)
 | `AZURE_OPENAI_DEPLOYMENT` | Azure OpenAI deployment name | Yes | - |
 | `AZURE_OPENAI_API_VERSION` | API version | No | `2024-12-01-preview` |
 | `MCP_BASE_URL` | MCP SSE endpoint | No | `http://localhost:8000/mcp/sse` |
+| `MCP_POLL_INITIAL_SECONDS` | Initial poll interval for branch status | No | `3` |
+| `MCP_POLL_MAX_SECONDS` | Max poll interval for branch status | No | `30` |
+| `MCP_POLL_TIMEOUT_SECONDS` | Max total poll time (min 3600s enforced) | No | `3600` |
+| `MCP_POLL_BACKOFF_FACTOR` | Poll backoff multiplier (> 1.0) | No | `1.5` |
 | `PROJECT_NAME` | Default project name | No | - |
 | `WORKSPACE_DIR` | Default workspace directory | No | Current working directory |
+| `REMOTE_WORKSPACE_DIR` | Default remote workspace directory | No | `/home/pan/workspace` |
 
 ### Input Modes
 
