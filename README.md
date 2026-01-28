@@ -218,11 +218,11 @@ Steps 1-3 run in parallel, then step 4 runs after all complete.
 
 ### Review Map Support
 
-If a `review-map.md` file exists in the workspace directory, Plan Agent will:
-1. Automatically load it as context before planning
-2. Skip generating a new review map when the query requests review
-3. Use the existing map as the authoritative source for review planning
-4. Only include a "validate/update review map" step if the existing map appears outdated
+Plan Agent loads review context in this order:
+1. `review-map.md` from the remote workspace on the parent branch (when available)
+2. `review-map.md` from the local workspace directory
+
+If no review map is found and the query does not request skipping it, Plan Agent will invoke a remote codebase analysis to seed the plan. To skip review-map and analysis generation, include a phrase like `不需要review map` or `skip review map` in the query.
 
 ### Build & Run
 
@@ -235,7 +235,7 @@ export AZURE_OPENAI_API_KEY="your-api-key"
 export AZURE_OPENAI_BASE_URL="https://your-endpoint.openai.azure.com"
 export AZURE_OPENAI_DEPLOYMENT="your-deployment"
 
-./plan-agent --query "Add authentication feature" --project-name "MyProject"
+./plan-agent --query "Add authentication feature" --project-name "MyProject" --parent-branch-id "branch-uuid"
 ```
 
 ---
