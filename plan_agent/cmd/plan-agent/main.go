@@ -18,9 +18,10 @@ import (
 
 func main() {
 	query := flag.String("query", "", "User query to plan for")
-	parent := flag.String("parent-branch-id", "", "Optional parent branch id context")
+	parent := flag.String("parent-branch-id", "", "Parent branch id to fork from (required)")
 	project := flag.String("project-name", "", "Override project name")
-	workspaceDir := flag.String("workspace-dir", "", "Workspace directory for context files (e.g., review-map.md)")
+	workspaceDir := flag.String("workspace-dir", "", "Local workspace directory for context files")
+	remoteWorkspaceDir := flag.String("remote-workspace-dir", "", "Remote workspace directory on Pantheon branch (default: /home/pan/workspace)")
 	headless := flag.Bool("headless", false, "Headless mode (no interactive prompt)")
 	streamJSON := flag.Bool("stream-json", false, "Emit workflow events as NDJSON (implies headless)")
 	flag.Parse()
@@ -43,8 +44,15 @@ func main() {
 	if *workspaceDir != "" {
 		conf.WorkspaceDir = *workspaceDir
 	}
+	if *remoteWorkspaceDir != "" {
+		conf.RemoteWorkspaceDir = *remoteWorkspaceDir
+	}
 	if conf.ProjectName == "" {
 		fmt.Fprintln(os.Stderr, "Project name required via PROJECT_NAME or --project-name")
+		os.Exit(1)
+	}
+	if *parent == "" {
+		fmt.Fprintln(os.Stderr, "--parent-branch-id is required")
 		os.Exit(1)
 	}
 
@@ -62,7 +70,7 @@ func main() {
 
 	brain := b.NewLLMBrain(conf.AzureAPIKey, conf.AzureEndpoint, conf.AzureDeployment, conf.AzureAPIVersion, 3)
 	mcp := t.NewMCPClient(conf.MCPBaseURL)
-	handler := t.NewToolHandler(mcp, conf.ProjectName, strings.TrimSpace(*parent), conf.WorkspaceDir, nil)
+	handler := t.NewToolHandlerWithConfig(mcp, &conf, strings.TrimSpace(*parent))
 
 	var streamer *streaming.JSONStreamer
 	if streamEnabled {
@@ -71,10 +79,11 @@ func main() {
 	}
 
 	runner, err := plan.NewRunner(brain, handler, streamer, plan.Options{
-		Query:          q,
-		ProjectName:    conf.ProjectName,
-		ParentBranchID: strings.TrimSpace(*parent),
-		WorkspaceDir:   conf.WorkspaceDir,
+		Query:              q,
+		ProjectName:        conf.ProjectName,
+		ParentBranchID:     strings.TrimSpace(*parent),
+		WorkspaceDir:       conf.WorkspaceDir,
+		RemoteWorkspaceDir: conf.RemoteWorkspaceDir,
 	})
 	if err != nil {
 		if streamer != nil && streamer.Enabled() {

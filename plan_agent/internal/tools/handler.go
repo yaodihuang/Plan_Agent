@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"plan_agent/internal/config"
 	"plan_agent/internal/logx"
 )
 
@@ -114,7 +115,84 @@ func NewToolHandler(client agentClient, defaultProject string, startBranch strin
 	return handler
 }
 
+func NewToolHandlerWithConfig(client agentClient, cfg *config.AgentConfig, startBranch string) *ToolHandler {
+	return &ToolHandler{
+		client:        client,
+		defaultProj:   cfg.ProjectName,
+		branchTracker: NewBranchTracker(startBranch),
+		workspaceDir:  strings.TrimSpace(cfg.WorkspaceDir),
+		pollTimeout:   cfg.PollTimeout,
+		pollInitial:   cfg.PollInitial,
+		pollMax:       cfg.PollMax,
+		pollBackoff:   cfg.PollBackoffFactor,
+		nowFunc:       time.Now,
+		sleepFunc:     time.Sleep,
+	}
+}
+
 func (h *ToolHandler) BranchRange() map[string]string { return h.branchTracker.Range() }
+
+func (h *ToolHandler) StartBranchID() string {
+	if h.branchTracker == nil {
+		return ""
+	}
+	return h.branchTracker.start
+}
+
+func (h *ToolHandler) ReadRemoteFile(branchID, filePath string) (string, error) {
+	if branchID == "" {
+		return "", ToolExecutionError{Msg: "branch_id is required for remote file read"}
+	}
+	if filePath == "" {
+		return "", ToolExecutionError{Msg: "file_path is required for remote file read"}
+	}
+	logx.Infof("Reading remote file %s from branch %s", filePath, branchID)
+	resp, err := h.client.BranchReadFile(branchID, filePath)
+	if err != nil {
+		return "", err
+	}
+	if resp == nil {
+		return "", ToolExecutionError{Msg: "branch_read_file returned empty response"}
+	}
+	if errVal, ok := resp["error"]; ok && errVal != nil {
+		return "", ToolExecutionError{Msg: fmt.Sprintf("branch_read_file error: %v", errVal)}
+	}
+	content, _ := resp["content"].(string)
+	return content, nil
+}
+
+// ExecuteAgent runs a remote agent via MCP and returns the response text and the new branch ID.
+// This is a public method that allows the Runner to directly invoke remote agents
+// (e.g., codex for code analysis) without going through the tool call loop.
+func (h *ToolHandler) ExecuteAgent(agent, prompt, parentBranchID string) (response string, branchID string, err error) {
+	if agent == "" {
+		return "", "", ToolExecutionError{Msg: "agent name is required"}
+	}
+	if prompt == "" {
+		return "", "", ToolExecutionError{Msg: "prompt is required"}
+	}
+	if parentBranchID == "" {
+		return "", "", ToolExecutionError{Msg: "parent_branch_id is required"}
+	}
+	project := h.defaultProj
+	if project == "" {
+		return "", "", ToolExecutionError{Msg: "project name is required but not configured"}
+	}
+
+	logx.Infof("ExecuteAgent: invoking %s on project %s from parent %s", agent, project, parentBranchID)
+
+	result, branchID, err := h.runAgentOnce(agent, project, parentBranchID, prompt)
+	if err != nil {
+		return "", "", err
+	}
+
+	responseText := ""
+	if resp, ok := result["response"].(string); ok {
+		responseText = strings.TrimSpace(resp)
+	}
+
+	return responseText, branchID, nil
+}
 
 type ToolCall struct {
 	ID       string `json:"id"`
@@ -320,7 +398,11 @@ func (h *ToolHandler) checkStatus(arguments map[string]any) (map[string]any, err
 	deadline := h.now().Add(timeout)
 	sleep := poll
 
+	attemptNum := 0
+
 	for {
+		attemptNum++
+		logx.Infof("Polling branch %s status (attempt %d, next check in %.1fs)...", branchID, attemptNum, sleep.Seconds())
 		resp, err := h.client.GetBranch(branchID)
 		if err != nil {
 			return nil, ToolExecutionError{
@@ -339,7 +421,9 @@ func (h *ToolHandler) checkStatus(arguments map[string]any) (map[string]any, err
 		}
 
 		status := stringsLower(resp["status"])
+		logx.Infof("Branch %s current status: %s", branchID, status)
 		if status == "succeed" {
+			logx.Infof("Branch %s completed successfully", branchID)
 			return resp, nil
 		}
 		if status == "failed" {
@@ -364,10 +448,11 @@ func (h *ToolHandler) checkStatus(arguments map[string]any) (map[string]any, err
 
 		if h.now().After(deadline) {
 			return nil, ToolExecutionError{
-				Msg:         fmt.Sprintf("timed out waiting for branch %s (last status=%s)", branchID, status),
+				Msg:         fmt.Sprintf("timed out waiting for branch %s after %d attempts (last status=%s, timeout=%s)", branchID, attemptNum, status, timeout),
 				Instruction: instructionFinishedWithErr,
 			}
 		}
+		logx.Debugf("Branch %s still %s, sleeping for %.1fs before next check", branchID, status, sleep.Seconds())
 		h.sleep(sleep)
 		next := minFloat(sleep.Seconds()*backoff, maxPoll.Seconds())
 		sleep = durationFromSeconds(next)

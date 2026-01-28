@@ -6,7 +6,7 @@ import (
 )
 
 func TestBuildPlanPromptIncludesCoreSections(t *testing.T) {
-	prompt := buildPlanPrompt("请拆解任务", "demo-project", "parent-123")
+	prompt := buildPlanPrompt("请拆解任务", "demo-project", "parent-123", "", "")
 	required := []string{
 		"Role: PLAN Agent",
 		planningStudyLine,

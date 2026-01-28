@@ -3,18 +3,29 @@ package config
 import (
 	"bufio"
 	"errors"
+	"fmt"
 	"os"
+	"strconv"
 	"strings"
+	"time"
 )
 
+const minPollTimeoutSeconds = 3600
+const minPollTimeout = time.Duration(minPollTimeoutSeconds) * time.Second
+
 type AgentConfig struct {
-	AzureAPIKey     string
-	AzureEndpoint   string
-	AzureDeployment string
-	AzureAPIVersion string
-	MCPBaseURL      string
-	ProjectName     string
-	WorkspaceDir    string
+	AzureAPIKey        string
+	AzureEndpoint      string
+	AzureDeployment    string
+	AzureAPIVersion    string
+	MCPBaseURL         string
+	PollInitial        time.Duration
+	PollMax            time.Duration
+	PollTimeout        time.Duration
+	PollBackoffFactor  float64
+	ProjectName        string
+	WorkspaceDir       string
+	RemoteWorkspaceDir string
 }
 
 func FromEnv() (AgentConfig, error) {
@@ -52,26 +63,77 @@ func FromEnv() (AgentConfig, error) {
 		return AgentConfig{}, errors.New("MCP_BASE_URL must be a valid HTTP/HTTPS URL")
 	}
 
+	pollInitial, err := envSeconds("MCP_POLL_INITIAL_SECONDS", 3)
+	if err != nil {
+		return AgentConfig{}, err
+	}
+	pollMax, err := envSeconds("MCP_POLL_MAX_SECONDS", 30)
+	if err != nil {
+		return AgentConfig{}, err
+	}
+	pollTimeout, err := envSeconds("MCP_POLL_TIMEOUT_SECONDS", minPollTimeoutSeconds)
+	if err != nil {
+		return AgentConfig{}, err
+	}
+	if pollInitial >= pollMax {
+		return AgentConfig{}, errors.New("MCP_POLL_INITIAL_SECONDS must be less than MCP_POLL_MAX_SECONDS")
+	}
+	if pollTimeout < minPollTimeout {
+		pollTimeout = minPollTimeout
+	}
+	if pollTimeout <= pollMax {
+		return AgentConfig{}, errors.New("MCP_POLL_TIMEOUT_SECONDS must be greater than MCP_POLL_MAX_SECONDS")
+	}
+
+	backoff := 1.5
+	if v := os.Getenv("MCP_POLL_BACKOFF_FACTOR"); v != "" {
+		f, err := strconv.ParseFloat(v, 64)
+		if err != nil || f <= 1.0 {
+			return AgentConfig{}, errors.New("MCP_POLL_BACKOFF_FACTOR must be a float greater than 1.0")
+		}
+		backoff = f
+	}
+
 	project := strings.TrimSpace(os.Getenv("PROJECT_NAME"))
 	workspace := os.Getenv("WORKSPACE_DIR")
 	if workspace == "" {
-		// Default to current working directory instead of executable's grandparent
 		if cwd, err := os.Getwd(); err == nil {
 			workspace = cwd
 		} else {
 			workspace = "."
 		}
 	}
+	remoteWorkspace := os.Getenv("REMOTE_WORKSPACE_DIR")
+	if remoteWorkspace == "" {
+		remoteWorkspace = "/home/pan/workspace"
+	}
 
 	return AgentConfig{
-		AzureAPIKey:     apiKey,
-		AzureEndpoint:   endpoint,
-		AzureDeployment: deployment,
-		AzureAPIVersion: apiVersion,
-		MCPBaseURL:      baseURL,
-		ProjectName:     project,
-		WorkspaceDir:    workspace,
+		AzureAPIKey:        apiKey,
+		AzureEndpoint:      endpoint,
+		AzureDeployment:    deployment,
+		AzureAPIVersion:    apiVersion,
+		MCPBaseURL:         baseURL,
+		PollInitial:        pollInitial,
+		PollMax:            pollMax,
+		PollTimeout:        pollTimeout,
+		PollBackoffFactor:  backoff,
+		ProjectName:        project,
+		WorkspaceDir:       workspace,
+		RemoteWorkspaceDir: remoteWorkspace,
 	}, nil
+}
+
+func envSeconds(name string, def int) (time.Duration, error) {
+	v := os.Getenv(name)
+	if v == "" {
+		return time.Duration(def) * time.Second, nil
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		return 0, fmt.Errorf("invalid integer for %s: %s", name, v)
+	}
+	return time.Duration(n) * time.Second, nil
 }
 
 func loadDotenv(path string) error {

@@ -44,7 +44,7 @@ const planAgentCore = "PLAN Agent - Generates multiple execution plans with para
 	"IMPORTANT: If the query is plain text (not JSON), treat it as mode='initial'.\n" +
 	"If the query is valid JSON with a 'mode' field, follow the mode-specific instructions below.\n\n"
 
-func buildPlanPrompt(query, projectName, parentBranchID, reviewMapContent string) string {
+func buildPlanPrompt(query, projectName, parentBranchID, reviewMapContent, codeAnalysisContext string) string {
 	var sb strings.Builder
 	sb.WriteString("Role: PLAN Agent\n\n")
 
@@ -54,6 +54,11 @@ func buildPlanPrompt(query, projectName, parentBranchID, reviewMapContent string
 		sb.WriteString("The following review map already exists for this project. Use it to inform your planning:\n\n")
 		sb.WriteString(reviewMapContent)
 		sb.WriteString("\n\n=== END OF REVIEW MAP ===\n\n")
+	} else if strings.TrimSpace(codeAnalysisContext) != "" {
+		sb.WriteString("=== CODE ANALYSIS CONTEXT ===\n")
+		sb.WriteString("The following codebase analysis was generated to provide context for planning:\n\n")
+		sb.WriteString(codeAnalysisContext)
+		sb.WriteString("\n\n=== END OF CODE ANALYSIS ===\n\n")
 	}
 
 	sb.WriteString(planningStudyLine)
@@ -85,22 +90,10 @@ func buildPlanPrompt(query, projectName, parentBranchID, reviewMapContent string
 	} else {
 		sb.WriteString("Review task workflow requirements (NO EXISTING REVIEW MAP):\n")
 		sb.WriteString("When the query requests codebase or repository review:\n")
-		sb.WriteString("1. The first step must generate a complete review map before any review execution\n")
-		sb.WriteString("2. The review map must include:\n")
-		sb.WriteString("   - Overall architecture and module boundaries\n")
-		sb.WriteString("   - Key code files and directory structure\n")
-		sb.WriteString("   - Potential high-risk areas and technical debt\n")
-		sb.WriteString("   - Core business logic that requires focus\n")
-		sb.WriteString("3. After the review map, the plan must:\n")
-		sb.WriteString("   - Define a systematic review strategy based on the review map\n")
-		sb.WriteString("   - Decompose review work into multiple subtasks\n")
-		sb.WriteString("   - For each subtask, specify review scope and focus areas\n")
-		sb.WriteString("   - Allocate appropriate resources and priorities\n")
-		sb.WriteString("4. Review map quality standards:\n")
-		sb.WriteString("   - Cover all important modules and files in the repository\n")
-		sb.WriteString("   - Identify key dependencies and interface definitions\n")
-		sb.WriteString("   - Mark known issues and historical changes when available in the repo\n")
-		sb.WriteString("   - Assess code complexity and test coverage signals\n")
+		sb.WriteString("1. Do NOT generate a review map. Use available context (code analysis, workspace files) to scope the review directly.\n")
+		sb.WriteString("2. Define a systematic review strategy based on the codebase structure and risks surfaced in the context.\n")
+		sb.WriteString("3. Decompose review work into multiple subtasks; for each, specify scope, focus areas, and resources/priority.\n")
+		sb.WriteString("4. Ensure coverage across important modules/files and key interfaces; call out high-risk areas and technical debt explicitly in the plan.\n")
 		sb.WriteString("5. Task dispatch requirements:\n")
 		sb.WriteString("   - Each subtask must have clear acceptance criteria\n")
 		sb.WriteString("   - Avoid overlap or omission across review scopes\n")

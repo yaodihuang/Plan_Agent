@@ -48,7 +48,7 @@ func NewLLMBrain(apiKey, endpoint, deployment, apiVersion string, maxRetries int
 		deployment: deployment,
 		apiVersion: apiVersion,
 		maxRetries: maxRetries,
-		client:     &http.Client{Timeout: 60 * time.Second},
+		client:     &http.Client{Timeout: 300 * time.Second},
 	}
 }
 
@@ -100,6 +100,11 @@ func (b *LLMBrain) Complete(messages []ChatMessage, tools []map[string]any) (*ch
 					if err := json.Unmarshal(data, &out); err != nil {
 						lastErr = err
 					} else {
+						if len(out.Choices) == 0 {
+							logx.Warningf("Azure OpenAI returned 0 choices. Response: %.500s", string(data))
+						} else if out.Choices[0].Message.Content == "" && len(out.Choices[0].Message.ToolCalls) == 0 {
+							logx.Warningf("Azure OpenAI returned empty content and no tool calls. Response: %.500s", string(data))
+						}
 						return &out, nil
 					}
 				} else {

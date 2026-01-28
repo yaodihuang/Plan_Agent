@@ -14,10 +14,11 @@ import (
 )
 
 type Options struct {
-	Query          string
-	ProjectName    string
-	ParentBranchID string
-	WorkspaceDir   string
+	Query              string
+	ProjectName        string
+	ParentBranchID     string
+	WorkspaceDir       string
+	RemoteWorkspaceDir string
 }
 
 type Result struct {
@@ -45,11 +46,15 @@ func NewRunner(brain *brain.LLMBrain, handler *t.ToolHandler, streamer *streamin
 	opts.ProjectName = strings.TrimSpace(opts.ProjectName)
 	opts.ParentBranchID = strings.TrimSpace(opts.ParentBranchID)
 	opts.WorkspaceDir = strings.TrimSpace(opts.WorkspaceDir)
+	opts.RemoteWorkspaceDir = strings.TrimSpace(opts.RemoteWorkspaceDir)
 	if opts.Query == "" {
 		return nil, errors.New("query is required")
 	}
 	if opts.ProjectName == "" {
 		return nil, errors.New("project name is required")
+	}
+	if opts.ParentBranchID == "" {
+		return nil, errors.New("parent branch id is required")
 	}
 	return &Runner{
 		brain:    brain,
@@ -62,25 +67,75 @@ func NewRunner(brain *brain.LLMBrain, handler *t.ToolHandler, streamer *streamin
 func (r *Runner) Run() (*Result, error) {
 	logx.Infof("Starting plan workflow")
 
-	// Pre-load review-map.md if it exists in workspace
 	reviewMapContent := ""
-	logx.Infof("WorkspaceDir: %q", r.opts.WorkspaceDir)
-	if r.opts.WorkspaceDir != "" {
-		reviewMapPath := filepath.Join(r.opts.WorkspaceDir, "review-map.md")
-		logx.Infof("Looking for review-map at: %s", reviewMapPath)
-		if data, err := os.ReadFile(reviewMapPath); err == nil {
-			reviewMapContent = strings.TrimSpace(string(data))
-			logx.Infof("Loaded review-map.md (%d bytes) from workspace", len(reviewMapContent))
-		} else if os.IsNotExist(err) {
-			logx.Warningf("review-map.md not found at: %s", reviewMapPath)
+
+	if r.opts.ParentBranchID != "" && r.opts.RemoteWorkspaceDir != "" {
+		remoteReviewMapPath := filepath.Join(r.opts.RemoteWorkspaceDir, "review-map.md")
+		logx.Infof("Attempting to read review-map.md from remote branch %s at path %s", r.opts.ParentBranchID, remoteReviewMapPath)
+		content, err := r.handler.ReadRemoteFile(r.opts.ParentBranchID, remoteReviewMapPath)
+		if err != nil {
+			logx.Warningf("Failed to read review-map.md from remote branch: %v. Will try local fallback.", err)
+		} else if strings.TrimSpace(content) != "" {
+			reviewMapContent = strings.TrimSpace(content)
+			logx.Infof("Loaded review-map.md (%d bytes) from remote branch %s", len(reviewMapContent), r.opts.ParentBranchID)
 		} else {
-			logx.Warningf("Failed to read review-map.md: %v", err)
+			logx.Warningf("Remote review-map.md is empty, will try local fallback.")
 		}
-	} else {
-		logx.Warningf("WorkspaceDir is empty, skipping review-map.md loading")
 	}
 
-	prompt := buildPlanPrompt(r.opts.Query, r.opts.ProjectName, r.opts.ParentBranchID, reviewMapContent)
+	if reviewMapContent == "" && r.opts.WorkspaceDir != "" {
+		localPath := filepath.Join(r.opts.WorkspaceDir, "review-map.md")
+		logx.Infof("Looking for review-map at local path: %s", localPath)
+		if data, err := os.ReadFile(localPath); err == nil {
+			reviewMapContent = strings.TrimSpace(string(data))
+			logx.Infof("Loaded review-map.md (%d bytes) from local workspace", len(reviewMapContent))
+		} else if os.IsNotExist(err) {
+			logx.Warningf("review-map.md not found locally at: %s", localPath)
+		} else {
+			logx.Warningf("Failed to read local review-map.md: %v", err)
+		}
+	}
+
+	codeAnalysisContext := ""
+
+	// Check if user explicitly wants to skip review-map/analysis based on query
+	skipAnalysis := strings.Contains(strings.ToLower(r.opts.Query), "不需要review map") ||
+		strings.Contains(strings.ToLower(r.opts.Query), "不需要 review map") ||
+		strings.Contains(strings.ToLower(r.opts.Query), "skip review map") ||
+		strings.Contains(strings.ToLower(r.opts.Query), "without review map")
+
+	if reviewMapContent == "" && !skipAnalysis {
+		logx.Warningf("No review-map.md found (remote or local). Will invoke remote agent to analyze codebase structure.")
+
+		analysisPrompt := `You are a senior software architect. Analyze the codebase structure and provide a concise summary including:
+1. Main modules/packages and their responsibilities
+2. Key entry points (main files, API endpoints)
+3. Important patterns or conventions used
+4. Dependencies between modules
+5. Any areas that might need special attention for the task
+
+Keep the analysis under 2000 words. Focus on information that would help with task planning.`
+
+		response, newBranchID, err := r.handler.ExecuteAgent("codex", analysisPrompt, r.opts.ParentBranchID)
+		if err != nil {
+			logx.Warningf("Failed to invoke codex for code analysis: %v. Proceeding without analysis context.", err)
+		} else if strings.TrimSpace(response) != "" {
+			codeAnalysisContext = strings.TrimSpace(response)
+			logx.Infof("Code analysis completed successfully (%d bytes) from branch %s", len(codeAnalysisContext), newBranchID)
+		} else {
+			logx.Warningf("Code analysis returned empty response from branch %s", newBranchID)
+		}
+	} else if skipAnalysis {
+		logx.Infof("Skipping code analysis as requested by user in query")
+	} else {
+		const maxReviewMapSize = 30000
+		if len(reviewMapContent) > maxReviewMapSize {
+			logx.Warningf("review-map.md is %d bytes, truncating to %d bytes to avoid token limit", len(reviewMapContent), maxReviewMapSize)
+			reviewMapContent = reviewMapContent[:maxReviewMapSize] + "\n\n[... truncated due to size limit ...]"
+		}
+	}
+
+	prompt := buildPlanPrompt(r.opts.Query, r.opts.ProjectName, r.opts.ParentBranchID, reviewMapContent, codeAnalysisContext)
 	messages := []brain.ChatMessage{
 		{Role: "system", Content: "You are the PLAN Agent for the Master Agent orchestration system. " +
 			"Generate high-quality, executable plans that balance speed, thoroughness, and risk. " +
@@ -119,6 +174,7 @@ func (r *Runner) Run() (*Result, error) {
 		}
 		content := strings.TrimSpace(choice.Content)
 		if content == "" {
+			logx.Errorf("LLM returned empty content. ToolCalls=%d, Role=%s", len(choice.ToolCalls), choice.Role)
 			return nil, errors.New("empty completion content")
 		}
 		planResult, err := parsePlanResult(content)
